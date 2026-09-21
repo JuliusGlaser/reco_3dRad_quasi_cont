@@ -1,0 +1,18 @@
+name: rsr_llr
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pyyaml
+  - scipy
+  - h5py
+  - packaging
+  - tqdm
+  - trx-python
+  - numba
+  - ipykernel
+  - matplotlib
+  - ipywidgets
+  - pip
+  - pydicom
