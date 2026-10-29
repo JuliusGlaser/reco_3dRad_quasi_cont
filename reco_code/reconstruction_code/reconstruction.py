@@ -1,5 +1,5 @@
-from enum import KEEP
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import numpy as np
 import cupy as cp
 import h5py
@@ -22,6 +22,7 @@ from scipy.io import loadmat
 from RadialSlidingRecon.matlab_functions_in_python import *
 import sys
 from pprint import pprint
+from scipy.io import savemat
 
 
 
@@ -79,10 +80,8 @@ def getCoilSensitivityMaps(k, params, config, device, coil_filename):
 
 def preProcessData(raw_data_selected, density_compensation_vornoi, kvec, params, shift_ppm, A_preprocess, device):
 
-    N_channels = params['acquisition']['channels']
-    N_selectedProjections = params['reconstruction']['selectiveProjections'][1] - params['reconstruction']['selectiveProjections'][0]
-    N_samples = params['acquisition']['radialSamples']
-
+    print("Raw_data_selected.shape: ", raw_data_selected.shape)
+    print("kvec.shape: ", kvec.shape)
     data_shifted, params = getSpatialDataTransform(raw_data_selected, kvec, params, shift_ppm)
 
     data_filtered, _ = getFilter(data_shifted, kvec, params)
@@ -283,7 +282,31 @@ def calc_fat_modu_k_space(gradient_times,  # second
 
     return res
 
+def save_meta_data(basefilename, meanTimes):
+    B0 = np.array([[0], [0], [1]])          # 3x1 column vector, as in MATLAB [0;0;1]
+    B0_strength = 7
+    CF = 127732435
 
+    # meanTimes must already exist as a 2D array (MATLAB size(meanTimes, 2) -> shape[1])
+
+    no_TE = meanTimes.shape[0]
+    TE_mat = meanTimes
+
+    matrix_size = np.array([[200, 200, 200]])   # 1x3 row vector
+    voxel_size = np.array([[1, 1, 1]])          # 1x3 row vector
+
+    savemat(
+        basefilename + '_metadata.mat',
+        {
+            'B0': B0,
+            'B0_strength': B0_strength,
+            'CF': CF,
+            'matrix_size': matrix_size,
+            'no_TE': no_TE,
+            'TE_mat': TE_mat,
+            'voxel_size': voxel_size,
+        },
+    )
 
 def smooth_fieldmap_3d(fieldmap_init, smoothfmiter):
     mask = np.array([[0, 1, 0],
@@ -320,7 +343,7 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
     nShifts = len(params['offresonant']['shift'])
 
     steps, meanTimes, T_rounded = get_quasi_continuous_params(params)
-    
+    steps_org=steps
     if config['steps'] > 0:
         steps = config['steps']
 
@@ -344,6 +367,8 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
     us_factor = config['undersampling_factor']
     slidingwindowpros = config['slidingwindowpros']
 
+    print("Fieldstrength: ", params['scanner']['fieldstrength'])
+
     TE_rastered = np.zeros((meanTimes.shape[0], N_selectedProjections, N_samples), dtype=np.float32)
     curr_projection = 0
     # print(params['acquisition']['echospacing'], params['acquisition']['projections'], params['acquisition']['echos'], params['acquisition']['TE'][0])
@@ -351,15 +376,12 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
         TE_rastered[te, :, :] = getTEArray_Rastered_pyth(params['acquisition']['echospacing'], params['acquisition']['projections'], params['acquisition']['echos'], params['acquisition']['TE'][0], [curr_projection, curr_projection+N_selectedProjections], N_samples, params['acquisition']['dwelltime'][0])
         curr_projection += N_window_step
 
-    avg_TE_rastered = np.mean(TE_rastered, axis=(1))
-    avg_TE_rastered = avg_TE_rastered[:,np.newaxis, :]
+    TE_rastered = TE_rastered.reshape((TE_rastered.shape[0]*TE_rastered.shape[1], -1))
+
     print("T_rounded:", T_rounded.shape)
     print("TE_rastered:", TE_rastered.shape)
-    print("avg_TE_rastered:", avg_TE_rastered.shape)
-    # np.savetxt('TE_rastered.txt', TE_rastered[0])
-    # np.savetxt('meanTimes.txt', meanTimes)
-    # np.savetxt('T_rounded.txt', T_rounded)
-    # np.savetxt('avg_TE_rastered.npy', avg_TE_rastered[:,0,:])
+    print("meanTimes:", meanTimes.shape)
+    
     FOV = config['recon_parameter']['FOV']
     N_slices = FOV
     fixed_output_slice = config['Fixed_output_slice']
@@ -370,13 +392,57 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
     N_slices_around_center_to_save = config['slices_around_center_to_save']
 
     us_factor = config['undersampling_factor']
-    mask_us = np.zeros(tuple([1] + [N_selectedProjections] + [N_samples]), dtype=np.complex64)
-    mask_us[:,::us_factor,:] = 1
-    mask_us = sp.to_device(mask_us, device=device) 
 
     file_name = config['file']
 
-    base_filename = f'{file_name}_win_{slidingwindowpros}_steps_{steps}_us_{us_factor}_C_{N_channels}_FOV_{FOV}_ppm{ppm_shift_str}'
+    if config['calc_equi_TE_windows']:
+        k_windowed, kvec_theos, TE_rastered_new, window_start_indices = convert_raw_into_TE_windows(raw_data, TE_rastered, params, config)
+        print("k_windowed.shape: ", k_windowed.shape)
+        print("kvec_theos.shape: ", kvec_theos.shape)
+        print("window_start_indices.shape: ", window_start_indices.shape)
+
+        steps_org = k_windowed.shape[1]
+        N_selectedProjections_org = k_windowed.shape[-2]
+
+        k_windowed = k_windowed[:, :,  ::us_factor, ...]
+        kvec_theos = kvec_theos.reshape(kvec_theos.shape[0], kvec_theos.shape[1], -1, N_samples)
+        kvec_theos = kvec_theos[:, :, ::us_factor]
+        kvec_theos = kvec_theos.reshape(kvec_theos.shape[0], kvec_theos.shape[1], -1)
+        TE_rastered_new = TE_rastered_new[:, ::us_factor, ...]
+        window_start_indices
+
+        factor = config['combine_windows']
+        if factor > 1:
+            k_windowed_comb = np.zeros((k_windowed.shape[0], k_windowed.shape[1]//factor, k_windowed.shape[2]*factor, k_windowed.shape[3]), dtype=k_windowed.dtype)
+            kvec_theos_comb = np.zeros((kvec_theos.shape[0]//factor, kvec_theos.shape[1], kvec_theos.shape[2]*factor), dtype=kvec_theos.dtype)
+            TE_rastered_comb = np.zeros((TE_rastered_new.shape[0]//factor, TE_rastered_new.shape[1]*factor, TE_rastered_new.shape[2]))
+            window_start_indices_comb = np.zeros((window_start_indices.shape[0]//factor), dtype=np.int64)
+            for i in range(k_windowed_comb.shape[1]):
+                k_windowed_comb[:,i,...] = k_windowed[:,i*factor:i*factor+factor,...].reshape((k_windowed.shape[0], factor*k_windowed.shape[2], k_windowed.shape[3]))
+                kvec_theos_comb[i,...] = kvec_theos[i*factor:i*factor+factor,...].transpose(1,0,2).reshape((3, factor*kvec_theos.shape[2]))
+                TE_rastered_comb[i,...] = TE_rastered_new[i*factor:i*factor+factor,...].reshape((factor*TE_rastered_new.shape[1], TE_rastered_new.shape[2]))
+                window_start_indices_comb[i] = window_start_indices[i*factor]
+
+            print("k_windowed_comb.shape: ", k_windowed_comb.shape)
+            k_windowed = k_windowed_comb
+            kvec_theos = kvec_theos_comb
+            TE_rastered_new = TE_rastered_comb
+            window_start_indices = window_start_indices_comb
+
+        TE_rastered = TE_rastered_new
+        print("TE_rastered.shape: ", TE_rastered.shape)
+        steps = k_windowed.shape[1]
+        N_selectedProjections = k_windowed.shape[-2]
+        base_filename = f'{file_name}_equi_TE_win_comb_{factor}_win_{slidingwindowpros}_steps_{steps}_us_{us_factor}_C_{N_channels}_FOV_{FOV}_ppm{ppm_shift_str}'
+        mask_us = np.ones(tuple([1] + [N_selectedProjections] + [N_samples]), dtype=np.complex64)
+        save_meta_data(base_filename, np.mean(TE_rastered[:,:,0], axis=1))
+    else:
+        base_filename = f'{file_name}_win_{slidingwindowpros}_steps_{steps}_us_{us_factor}_C_{N_channels}_FOV_{FOV}_ppm{ppm_shift_str}'
+        mask_us = np.zeros(tuple([1] + [N_selectedProjections] + [N_samples]), dtype=np.complex64)
+        mask_us[:,::us_factor,:] = 1
+        mask_us = sp.to_device(mask_us, device=device) 
+
+        save_meta_data(base_filename, meanTimes)
 
     # if mps where already computed for this dataset -> load them, if not compute them later (unless data is single channel)
     mps = None
@@ -390,7 +456,6 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
     if Path(os.path.join(params['path'],  coil_filename)).exists():
         with h5py.File(os.path.join(params['path'],  coil_filename), 'r') as f:
             mps = f['mps'][:]
-            mps = mps[:N_channels,...]
             mps_conj = mps[...].conj()
             coilcombine_den = np.linalg.norm(mps, axis=0)
     elif N_channels == 1:
@@ -474,13 +539,19 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
     full_filename_inis_complete = os.path.join(params['path'], f'initially_reconstructed_{base_filename}_complete.h5')
     full_filename_inis = os.path.join(params['path'], f'initially_reconstructed_{base_filename}.h5')
 
-    initial_x_all = np.zeros(tuple([steps, nShifts] + params["reconstruction"]["sizeFilling"]), dtype=np.complex64)
-    initial_x_all_filtered = np.zeros(tuple([steps, nShifts] + params["reconstruction"]["sizeFilling"]), dtype=np.complex64)
 
+    with h5py.File(os.path.join(params['path'], f'TE_rastered_{N_selectedProjections}_N_windows_{steps}.h5'), 'w') as f:
+        # f.create_dataset('meanTimes', data=meanTimes)
+        f.create_dataset('TE_rastered', data=TE_rastered)
 
     if config['iterativeReco'] or config['save_complete']:
         k_all = np.zeros(tuple([steps, nShifts, N_channels] + [N_selectedProjections] + [N_samples]), dtype=np.complex64)
         coords_all = np.zeros(tuple([steps] + [N_selectedProjections] + [N_samples] + [3]), dtype=np.float32)
+        kvec_theo_all = np.zeros(tuple([steps] + [3] + [N_selectedProjections*N_samples]), dtype=np.float32)
+        density_compensation_vornoi_comb = []
+
+    initial_x_all = np.zeros(tuple([steps, nShifts] + params["reconstruction"]["sizeFilling"]), dtype=np.complex64)
+    initial_x_all_filtered = np.zeros(tuple([steps, nShifts] + params["reconstruction"]["sizeFilling"]), dtype=np.complex64)
 
     if Path(os.path.join(params['path'],  full_filename_inis_complete)).exists() and config['iterativeReco']:
         with h5py.File(os.path.join(params['path'],  full_filename_inis_complete), 'r') as f:
@@ -490,46 +561,69 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
             k_all = f['k_all'][:]
     else:
         for i in range(steps):
+            print(f">>> Processing step {i+1}/{steps}") 
+            if config['calc_equi_TE_windows'] is False:
+                projection_start = i* params['slidingwindowstep']
+                projection_end = projection_start + params['slidingwindowpros']
+                params['reconstruction']['selectiveProjections'] = [projection_start, projection_end]
+                print(f">>> projections {projection_start} to {projection_end}")
 
-            projection_start = i* params['slidingwindowstep']
-            projection_end = projection_start + params['slidingwindowpros']
-            params['reconstruction']['selectiveProjections'] = [projection_start, projection_end]
-            print(f">>> Processing step {i+1}/{steps} with projections {projection_start} to {projection_end}") 
+                azimutalAngle, polarAngle = getProjectionAngles(params["acquisition"]["goldenAngle"], proj_start=projection_start, proj_end=projection_end)
 
-            azimutalAngle, polarAngle = getProjectionAngles(params, 1)
-
-            kvec_theo, reso = getKvecTheo(params)
+                kvec_theo, reso = getKvecTheo(params)
 
 
-            if params['reconstruction']['kvecMethod'] == 2:
-                loaded_kvec = loadmat(os.path.join(config['path'],config['recon_parameter']['kvecFile']))
-                kvec_meas = loaded_kvec['kVec_Meas_AxsEco'].T
-                reso = 1 / (2 * kvec_meas[2, -1]) * 1000  # [mm]
-                kvec_theo = getCoordinates(azimutalAngle, polarAngle, kvec_meas, params['acquisition']['coordinatesVersion'])
-            elif params['reconstruction']['kvecMethod'] == 3:
-                loaded_kvec = loadmat(os.path.join(config['path'],config['recon_parameter']['kvecFile']))
-                kvec_meas = loaded_kvec['kVec_Meas_AxsEco'].T
-                reso = 1 / (2 * kvec_meas[2, -1]) * 1000  # [mm]
-                kvec_theo = getCoordinates(azimutalAngle, polarAngle, kvec_meas, params['acquisition']['coordinatesVersion'])
+                if params['reconstruction']['kvecMethod'] == 2:
+                    loaded_kvec = loadmat(os.path.join(config['path'],config['recon_parameter']['kvecFile']))
+                    kvec_meas = loaded_kvec['kVec_Meas_AxsEco'].T
+                    reso = 1 / (2 * kvec_meas[2, -1]) * 1000  # [mm]
+                    kvec_theo = getCoordinates(azimutalAngle, polarAngle, kvec_meas, params['acquisition']['coordinatesVersion'])
+                elif params['reconstruction']['kvecMethod'] == 3:
+                    loaded_kvec = loadmat(os.path.join(config['path'],config['recon_parameter']['kvecFile']))
+                    kvec_meas = loaded_kvec['kVec_Meas_AxsEco'].T
+                    reso = 1 / (2 * kvec_meas[2, -1]) * 1000  # [mm]
+                    kvec_theo = getCoordinates(azimutalAngle, polarAngle, kvec_meas, params['acquisition']['coordinatesVersion'])
+                else:
+                    # loaded_kvec = loadmat(os.path.join(config['path'],config['recon_parameter']['kvecFile']))
+                    # kvec_meas = loaded_kvec['kVec_Meas_AxsEco'].T
+                    kvec_theo = getCoordinates(azimutalAngle, polarAngle, kvec_theo, params['acquisition']['coordinatesVersion'])
+
+                params['reconstruction']['resolution'] = reso
+
+                kvec_theo = getKvecRotation(kvec_theo, params['reconstruction']['rotation'])
+
+                kvec_scaled = kvec_theo / np.max(np.abs(kvec_theo))
+
+                Nd = np.array(params["reconstruction"]["sizeFilling"], dtype=np.float32)  # (Nx,Ny,Nz)
+                coord = kvec_scaled * (Nd[:, None]) / 2
+
+                # coord = np.transpose(coord)  # shape (3,M)
+                coord = coord.reshape((3, N_samples, N_selectedProjections), order="F")
+                coord = coord.T
+
+                raw_data_selected = raw_data[:, params['reconstruction']['selectiveProjections'][0]:params['reconstruction']['selectiveProjections'][1],:]
+                # raw_data_selected = raw_data_selected * sp.to_device(mask_us, device=sp.get_device(raw_data_selected))
+
             else:
-                # loaded_kvec = loadmat(os.path.join(config['path'],config['recon_parameter']['kvecFile']))
-                # kvec_meas = loaded_kvec['kVec_Meas_AxsEco'].T
-                kvec_theo = getCoordinates(azimutalAngle, polarAngle, kvec_theo, params['acquisition']['coordinatesVersion'])
+                kvec_theo = kvec_theos[i,...]
+                kvec_scaled = kvec_theo / np.max(np.abs(kvec_theo))
+        
+                Nd = np.array(params["reconstruction"]["sizeFilling"], dtype=np.float32)  # (Nx,Ny,Nz)
+                coord = kvec_scaled * (Nd[:, None]) / 2
+        
+                # coord = np.transpose(coord)  # shape (3,M)
+                coord = coord.reshape((3, k_windowed.shape[-1], k_windowed.shape[-2]), order="F")
+                coord = coord.T
+        
+                raw_data_selected = k_windowed[:,i,...]
+                print("raw_data_selected: ", raw_data_selected.shape)
 
-            params['reconstruction']['resolution'] = reso
+                params['reconstruction']['selectiveProjections'] = [window_start_indices[i], window_start_indices[i] + raw_data_selected.shape[1]]
+                projection_start = i* params['slidingwindowstep']
+                projection_end = projection_start + params['slidingwindowpros']
+                print(f">>> projections {projection_start} to {projection_end}")
 
-            kvec_theo = getKvecRotation(kvec_theo, params['reconstruction']['rotation'])
-
-            kvec_scaled = kvec_theo / np.max(np.abs(kvec_theo))
-
-            Nd = np.array(params["reconstruction"]["sizeFilling"], dtype=np.float32)  # (Nx,Ny,Nz)
-            coord = kvec_scaled * (Nd[:, None]) / 2
-
-            # coord = np.transpose(coord)  # shape (3,M)
-            coord = coord.reshape((3, N_samples, N_selectedProjections), order="F")
-            coord = coord.T
-
-            N_selectedProjections = params['reconstruction']['selectiveProjections'][1] - params['reconstruction']['selectiveProjections'][0]
+            
 
             A_preprocess = sp.linop.Diag(
                     [
@@ -543,16 +637,35 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
                     oaxis=0
                 )
 
-            raw_data_selected = raw_data[:, params['reconstruction']['selectiveProjections'][0]:params['reconstruction']['selectiveProjections'][1],:]
-            raw_data_selected = raw_data_selected * sp.to_device(mask_us, device=sp.get_device(raw_data_selected))
-
             if params['reconstruction']['kvecMethod'] == 2:
                 # Load precomputed Voronoi density compensation from file
-                with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_{N_selectedProjections}_N_windows_{steps}.h5'), 'r') as f:
-                    n_TE = params['reconstruction']['selectiveProjections'][0]//params['slidingwindowstep']
-                    density_compensation_vornoi = f['densityCompensationVoronoi'][n_TE,...]
-                    density_compensation_vornoi = density_compensation_vornoi[np.newaxis, np.newaxis, :]
-                    # density_compensation_vornoi = np.ones_like(density_compensation_vornoi)
+                if config['calc_equi_TE_windows']:
+                    with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_{N_selectedProjections_org}_N_windows_{steps_org}.h5'), 'r') as f:
+                        density_compensation_vornoi = f['densityCompensationVoronoi'][...]
+                        density_compensation_vornoi = density_compensation_vornoi[:,::us_factor,...]
+                        factor = config['combine_windows']
+
+                        if config['combine_windows'] > 1:
+                            density_compensation_vornoi_comb = np.zeros((density_compensation_vornoi.shape[0]//factor, density_compensation_vornoi.shape[1]*factor, density_compensation_vornoi.shape[2]), dtype=density_compensation_vornoi.dtype)
+                            for win in range(density_compensation_vornoi_comb.shape[0]):
+                                density_compensation_vornoi_comb[win,...] = density_compensation_vornoi[win*factor:win*factor+factor,...].reshape((factor*density_compensation_vornoi.shape[1], density_compensation_vornoi.shape[2]))
+                            density_compensation_vornoi = density_compensation_vornoi_comb[i,...]
+                        else:
+                            density_compensation_vornoi = density_compensation_vornoi[i,...]
+
+                        density_compensation_vornoi = density_compensation_vornoi[np.newaxis, np.newaxis, :]
+
+                else:
+                    with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_{N_selectedProjections}_N_windows_{steps_org}.h5'), 'r') as f:
+                    # with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_4000_N_windows_30.h5'), 'r') as f:
+
+                        n_TE = params['reconstruction']['selectiveProjections'][0]//params['slidingwindowstep']
+                        density_compensation_vornoi = f['densityCompensationVoronoi'][n_TE,...]
+                        # density_compensation_vornoi = f['densityCompensationVoronoi'][...]
+                        # density_compensation_vornoi = density_compensation_vornoi.reshape(120000,384)
+                        # density_compensation_vornoi = density_compensation_vornoi[n_TE*N_window_step:n_TE*N_window_step+N_selectedProjections,:]
+                        density_compensation_vornoi = density_compensation_vornoi[np.newaxis, np.newaxis, :]
+                        # density_compensation_vornoi = np.ones_like(density_compensation_vornoi)
             else:
                 density_compensation_vornoi = None
 
@@ -589,13 +702,14 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
 
                 initial_x_shifts_comb[i_shift,...] = initial_x_comb
                 initial_x_filtered_comb[i_shift,...] = initial_x_filt_comb
-                    
+
             initial_x_all[i,...] = initial_x_shifts_comb
             initial_x_all_filtered[i,...] = initial_x_filtered_comb
 
             if config['iterativeReco'] or config['save_complete']:
                 coords_all[i,...] = coord
                 k_all[i,...] = k_shifts
+                kvec_theo_all[i,...] = kvec_theo
 
         sub_basis = None #TODO: define subspace basis if needed for iterative reconstruction
             # to reduce size of the saved file, we only save certain slices
@@ -609,8 +723,8 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
                     f.create_dataset("config", data=config_str)
             else:
                 with h5py.File(full_filename_inis, 'w') as f:
-                    f.create_dataset('initial_img', data=sp.to_device(initial_x_all[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save]))
-                    f.create_dataset('initial_img_filtered', data=sp.to_device(initial_x_all_filtered[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save]))
+                    f.create_dataset('initial_img', data=sp.to_device(initial_x_all[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save,:]))
+                    f.create_dataset('initial_img_filtered', data=sp.to_device(initial_x_all_filtered[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save,:]))
                     f.create_dataset("config", data=config_str)
         
         if config['save_nii']:
@@ -639,6 +753,36 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
     print(initial_x_all.shape)
     if config['iterativeReco']:
         # print(f"> Starting reconstruction for shift {i} / {nShifts}")
+
+        if params['reconstruction']['kvecMethod'] == 2:
+            # Load precomputed Voronoi density compensation from file
+            if config['calc_equi_TE_windows']:
+                with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_{N_selectedProjections_org}_N_windows_{steps_org}.h5'), 'r') as f:
+                    density_compensation_vornoi = f['densityCompensationVoronoi'][...]
+                    density_compensation_vornoi = density_compensation_vornoi[::us_factor,...]
+                    factor = config['combine_windows']
+
+                    if config['combine_windows'] > 1:
+                        density_compensation_vornoi_comb = np.zeros((density_compensation_vornoi.shape[0]//factor, density_compensation_vornoi.shape[1]*factor, density_compensation_vornoi.shape[2]), dtype=density_compensation_vornoi.dtype)
+                        for win in range(density_compensation_vornoi_comb.shape[0]):
+                            density_compensation_vornoi_comb[win,...] = density_compensation_vornoi[win*factor:win*factor+factor,...].reshape((factor*density_compensation_vornoi.shape[1], density_compensation_vornoi.shape[2]))
+                        density_compensation_vornoi_comb = np.sqrt(density_compensation_vornoi_comb[np.newaxis,...])
+                        density_compensation_vornoi_comb = sp.to_device(density_compensation_vornoi_comb, device=device)
+
+
+            else:
+                with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_{N_selectedProjections}_N_windows_{steps_org}.h5'), 'r') as f:
+                # with h5py.File(os.path.join(config['path'], f'densityCompensation_projections_4000_N_windows_30.h5'), 'r') as f:
+                    
+                    density_compensation_vornoi_comb = f['densityCompensationVoronoi'][...]
+                    # density_compensation_vornoi = f['densityCompensationVoronoi'][...]
+                    # density_compensation_vornoi = density_compensation_vornoi.reshape(120000,384)
+                    # density_compensation_vornoi = density_compensation_vornoi[n_TE*N_window_step:n_TE*N_window_step+N_selectedProjections,:]
+                    density_compensation_vornoi_comb = np.sqrt(density_compensation_vornoi_comb[np.newaxis,...])
+                    density_compensation_vornoi_comb = sp.to_device(density_compensation_vornoi_comb, device=device)
+                    # density_compensation_vornoi = np.ones_like(density_compensation_vornoi)
+        else:
+            density_compensation_vornoi = None
 
         mps = sp.to_device(mps, device=device)
         coords_all = sp.to_device(coords_all, device=device)
@@ -669,11 +813,13 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
 
     
         if gpu_exclusively:
+            print(">> Using GPU exclusively for iterative reconstruction")
             PI_op = sp.linop.Diag(
                         [
                             sp.linop.Vstack(
                                 [   
-                                    sp.linop.Multiply(tuple([1] + [1] + [slidingwindowpros] + [N_samples]), mask_us[xp.newaxis, ...]) *
+                                    sp.linop.Multiply(tuple([1] + [1] + [N_selectedProjections] + [N_samples]), density_compensation_vornoi_comb[:,[TE],...]) *
+                                    sp.linop.Multiply(tuple([1] + [1] + [N_selectedProjections] + [N_samples]), mask_us) *
                                     sp.linop.NUFFT(ishape=tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), coord=coords_all[TE,...], oversamp=params['reconstruction']['gridOS'], width=4, toeplitz=False) *
                                     # sp.linop.Transpose(tuple([steps] + [1] + params["reconstruction"]["sizeFilling"]), axes=(0,1,4,3,2)) * 
                                     sp.linop.Multiply(tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), mps[c,...])
@@ -692,8 +838,7 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
                         [
                             sp.linop.Vstack(
                             [   
-                                sp.linop.ToDevice(shape=tuple([1] + [1] + [slidingwindowpros] + [N_samples]), odevice=sp.Device(-1), idevice=sp.Device(0)) * 
-                                sp.linop.Multiply(tuple([1] + [1] + [slidingwindowpros] + [N_samples]), mask_us[xp.newaxis, ...]) *
+                                sp.linop.ToDevice(shape=tuple([1] + [1] + [slidingwindowpros] + [N_samples]), odevice=sp.Device(-1), idevice=sp.Device(0)) *
                                 sp.linop.NUFFT(ishape=tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), coord=coords_all[TE,...], oversamp=params['reconstruction']['gridOS'], width=4, toeplitz=False) *
                                 sp.linop.Multiply(tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), mps[c,...]) *
                                 sp.linop.ToDevice(shape=tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), odevice=device, idevice=sp.Device(-1))
@@ -710,8 +855,7 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
             A_one_Device = sp.linop.Diag(
                         [
                             sp.linop.Vstack(
-                            [   
-                                sp.linop.Multiply(tuple([1] + [1] + [slidingwindowpros] + [N_samples]), mask_us[xp.newaxis, ...]) *
+                            [  
                                 sp.linop.NUFFT(ishape=tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), coord=coords_all[TE,...], oversamp=params['reconstruction']['gridOS'], width=4, toeplitz=False) *
                                 sp.linop.Multiply(tuple([1] + [1] + params["reconstruction"]["sizeFilling"]), mps[c,...])
                                 for c in range(N_channels)
@@ -757,11 +901,9 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
 
         if gpu_exclusively:
             k = sp.to_device(k_all.squeeze(), device=device)
-            k = k * sp.to_device(mask_us, device=device)
             k_device = device
         else:
             k = sp.to_device(k_all.squeeze())
-            k = k * sp.to_device(mask_us, device=sp.Device(-1))
             k_device = sp.Device(-1)
 
         # print('scale: ' + str(scale))
@@ -788,7 +930,6 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
 
                     A_for_ini =  sp.linop.Vstack(
                                     [   
-                                        sp.linop.Multiply(tuple([1] + [slidingwindowpros] + [N_samples]), mask_us[ ...]) *
                                         sp.linop.NUFFT(ishape=tuple([1] + params["reconstruction"]["sizeFilling"]), coord=coords_TE, oversamp=params['reconstruction']['gridOS'], width=2, toeplitz=False) *
                                         # sp.linop.Transpose(tuple([steps] + [1] + params["reconstruction"]["sizeFilling"]), axes=(0,1,4,3,2)) * 
                                         sp.linop.Multiply(tuple([1] + params["reconstruction"]["sizeFilling"]), mps[c,...])
@@ -830,7 +971,8 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
                     with h5py.File(filename_init_sol, 'w') as f:
                         f.create_dataset('final_images', data=res[...,N_slices//2-2-N_slices_around_center:N_slices//2+N_slices_around_center+2])
                         f.create_dataset("config", data=config_str)
-                    
+
+                
 
                 initial_x_all = res
         
@@ -897,22 +1039,30 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
                     f.create_dataset('final_images', data=sp.to_device(out_rot[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save]))
 
         elif recon_type == 'basic':
-            if fixed_output_slice >= 0:
-                res = np.zeros_like(sp.to_device(initial_x_all[...,fixed_output_slice]))
-            else:
-                res = np.zeros_like(sp.to_device(initial_x_all[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save]))
+                
+            res = np.zeros_like(sp.to_device(initial_x_all))
             # res = np.zeros(tuple([max_iter] + params["reconstruction"]["sizeFilling"]), dtype=np.complex64)
             print(res.shape)
             for echo_t in range(steps):
 
                 print("Processing TE {}/{}...".format(echo_t+1, steps))
 
+                print("k shape: ", k.shape)
                 k_TE = sp.to_device(k[[echo_t],...], device)
+                print("k_TE shape: ", k_TE.shape)
+
+                print("density_compensation_vornoi shape: ", density_compensation_vornoi.shape if density_compensation_vornoi is not None else "None")
                 if iter_reco_config['initial_sol_filt']:
-                    img_TE = sp.to_device(initial_x_all_filtered[[echo_t],...], device)
+                    img_TE = sp.to_device(initial_x_all_filtered[:,[echo_t],...], device)
                 else:
-                    img_TE = sp.to_device(initial_x_all[[echo_t],...], device)
+                    print(initial_x_all.shape)
+                    img_TE = sp.to_device(np.zeros_like(initial_x_all[[echo_t],...]), device)
+
+                print("img_TE shape: ", img_TE.shape)
                 coords_TE = coords_all[[echo_t],...]
+
+                dcf_sqrt = density_compensation_vornoi_comb[:,[echo_t],...]
+                k_TE = dcf_sqrt * k_TE
 
                 A =  PI_op.linops[echo_t]
 
@@ -938,13 +1088,29 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
                     # res[it,...] = sp.to_device(iterative_solver._output())
                     it += 1
 
-                if fixed_output_slice >= 0:
-                    res[echo_t,...] = sp.to_device(iterative_solver._output()[...,fixed_output_slice])
-                else:
-                    res[echo_t,...] = sp.to_device(iterative_solver._output()[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save])
+                res[echo_t,...] = sp.to_device(iterative_solver._output()[...])
             
             with h5py.File(full_filename, 'r+') as f:
-                f.create_dataset('final_images', data=res)
+                if fixed_output_slice >= 0:
+                    f.create_dataset('final_images', data=res[...,fixed_output_slice])
+                else:
+                    f.create_dataset('final_images', data=res[...,N_slices//2-N_slices_around_center_to_save:N_slices//2+N_slices_around_center_to_save])
+                
+
+            if config['save_nii']:
+                print("> Saving reconstructed solution as NIfTI files...")
+                
+                if config['save_all_slices'] or config['save_complete']:
+                    folder, filename = os.path.split(full_filename)
+                    filename, ext = os.path.splitext(filename)
+                else:
+                    folder, filename = os.path.split(full_filename)
+                    filename, ext = os.path.splitext(filename)
+
+                print(">>> Saving NIfTI as ", filename)
+                print(">>> Saving at ", config['path'])
+                np_to_nii(res.squeeze(), affine=None, out_name=filename, file_path=config['path'], config_str=config_str)
+                                
         
         elif recon_type == 'k_s_sepa':
 
@@ -1071,10 +1237,21 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
             if moba_par['init_fieldmap']:
                 with h5py.File(moba_par['init_file_path'], 'r') as f: #TODO: fix hardcode
                     field_map = np.real(f['field_map'][:])
-                    # field_map = field_map[12:187, 12:187, 12:187]
-                    fat_map = f['fat_map'][:]
-                    wat_map = f['wat_map'][:]
+                    if moba_par['smooth_fieldmap']:
+                        field_map = smooth_fieldmap_3d(field_map, 30)
                     
+                    if moba_par['fm_normalization']== 'max':
+                        field_map = field_map / np.max(field_map)
+                    elif moba_par['fm_normalization']== 'minmax':
+                        field_map = (field_map - field_map.min()) / (field_map.max() - field_map.min())
+                    else:
+                        print("No normalization applied to field map")
+                    # field_map = field_map*2-1
+                    # field_map = field_map[12:187, 12:187, 12:187]
+                    if moba_par['init_fat_water']:
+                        fat_map = f['fat_map'][:]
+                        wat_map = f['wat_map'][:]
+
                 if moba_par['init_fat_water']:
                     initial_sol[0,0, ...] = wat_map*scaling
                     initial_sol[1,0, ...] = fat_map *scaling
@@ -1087,12 +1264,15 @@ def RadialImageReconstruction_SlidingWindow(config, raw_data, params):
             initial_sol = sp.to_device(initial_sol)
             k = sp.to_device(k)
             k = k[:, np.newaxis, ...]  # add coil dimension
+            scale = 100 / np.linalg.norm(k)
+            k = k * scale
             mps = sp.to_device(mps)
             print(">> Starting nonlinear reconstruction with FWZ model...")
             
             iterative_solver = nlrecon.kinv(y=k, image_shape=list(initial_sol.shape), model='FWZ', coil=mps, coord=coords_all, 
                                             coil_shape=list(mps.shape), x=initial_sol, rvc=[False, False, True], echo_times=meanTimes[:, np.newaxis]*1E-3, gradient_times=TE_rastered*1e-6, 
-                                            inner_iter=moba_par['max_iter_CG'], outer_iter=moba_par['max_iter_IRGNM'], alpha=moba_par['alpha'], redu=moba_par['redu'], inner_tol=moba_par['inner_tol'], fix_fieldmap=moba_par['fix_fieldmap'], trafo_MGRE=moba_par['trafo_MGRE'])
+                                            inner_iter=moba_par['max_iter_CG'], outer_iter=moba_par['max_iter_IRGNM'], alpha=moba_par['alpha'], redu=moba_par['redu'], 
+                                            inner_tol=moba_par['inner_tol'], fix_fieldmap=moba_par['fix_fieldmap'], trafo_MGRE=moba_par['trafo_MGRE'], field_strength=params['scanner']['fieldstrength'])
             
             iter = 0
             while not iterative_solver.done():
@@ -1148,6 +1328,7 @@ def main():
     print(f">> Loading data from {full_path}...")
     t = time()
     mapped = twixtools.map_twix(full_path)
+    print("len mapped", len(mapped))
 
     print(f"Preparing parameters...")
     params = paramsPreperation(config, mapped)

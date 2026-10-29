@@ -24,6 +24,7 @@ from scipy.spatial import Voronoi, ConvexHull
 import numpy as np
 
 from RadialSlidingRecon.reconstruction import *
+from RadialSlidingRecon.utility import *
 from multiprocessing import Pool, cpu_count,shared_memory
 
 from concurrent.futures import ProcessPoolExecutor
@@ -191,16 +192,53 @@ def main():
     pros = config['N_projections'] * config['N_TE']  # [#]
     steps = int((pros - config['slidingwindowpros']) / config['slidingwindowstep'] + 1)
 
+    if config['cropped_equal_echo_arr']:
+        params['acquisition']["TEspacing"] = config['echospacing']
+        params['acquisition']["echos"] = config['N_TE']
+        params['acquisition']["projections"] = config['N_projections']
+        params['acquisition']["TE"] = [0.1, 2.0, 3.9, 5.8, 7.7]
+        params['acquisition']['dwelltime'] = [2.0, 2.0]
+
+
+        steps, meanTimes, T_rounded = get_quasi_continuous_params(params)
+            
+        N_selectedProjections = config['slidingwindowpros']
+        N_window_step = config['slidingwindowstep']
+        N_samples = params['acquisition']['radialSamples']
+
+        TE_rastered = np.zeros((meanTimes.shape[0], N_selectedProjections, N_samples), dtype=np.float32)
+        curr_projection = 0
+        # print(params['acquisition']['echospacing'], params['acquisition']['projections'], params['acquisition']['echos'], params['acquisition']['TE'][0])
+        for te in range(meanTimes.shape[0]):
+            TE_rastered[te, :, :] = getTEArray_Rastered_pyth(params['acquisition']['TEspacing'], params['acquisition']['projections'], params['acquisition']['echos'], params['acquisition']['TE'][0], [curr_projection, curr_projection+N_selectedProjections], N_samples, params['acquisition']['dwelltime'][0])
+            curr_projection += N_window_step
+
+        TE_rastered = TE_rastered.reshape((TE_rastered.shape[0]*TE_rastered.shape[1], -1))
+        n_to_keep, new_arr, dropped_indices, window_start_indices = get_indices_to_drop(TE_rastered)
+
+        N_total_proj = config['N_projections'] * config['N_TE']
+        steps = new_arr.shape[0]//n_to_keep
+
+        params['slidingwindowpros'] = n_to_keep
+
     density_compensation_vornoi_list = []
 
     full_t = time()
     for i in range(steps):
-        projection_start = i* params['slidingwindowstep']
-        projection_end = projection_start + params['slidingwindowpros']
-        params['reconstruction']['selectiveProjections'] = [projection_start, projection_end]
-        print(f"Processing step {i+1}/{steps} with projections {projection_start} to {projection_end}") 
 
-        azimutalAngle, polarAngle = getProjectionAngles(params, 1)
+        if config['cropped_equal_echo_arr'] is False:
+            projection_start = i* params['slidingwindowstep']
+            projection_end = projection_start + params['slidingwindowpros']
+            params['reconstruction']['selectiveProjections'] = [projection_start, projection_end]
+            print(f"Processing step {i+1}/{steps} with projections {projection_start} to {projection_end}") 
+        else:
+            projection_start = window_start_indices[i]
+            projection_end = projection_start + n_to_keep
+            params['reconstruction']['selectiveProjections'] = [projection_start, projection_end]
+            print(f"Processing step {i+1}/{steps} with projections {projection_start} to {projection_end}") 
+
+
+        azimutalAngle, polarAngle = getProjectionAngles(goldenAngle = config['goldenAngle'], proj_start = projection_start, proj_end=projection_end)
 
         loaded_kvec = loadmat(os.path.join(config['path'], config['kvecFile']))
         kvec = loaded_kvec['kVec_Meas_AxsEco'].T
