@@ -1,0 +1,16 @@
+path: /path/to/data
+kvecFile: Terra_1000mum_Slew100_BaseRes300.mat
+
+
+N_TE: 6
+N_projections: 20000
+slidingwindowpros: 4000
+slidingwindowstep: 1000
+radialSamples: 384
+echospacing: 1700
+
+cropped_equal_echo_arr: False
+
+goldenAngle: true
+coordinatesVersion: 1
+rotation: [0, 0, 0]
