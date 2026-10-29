@@ -1,0 +1,22 @@
+FWS_hmrGC_v0.2.0_dev
+
+
+Evaluated using code by Shirin Heidarikahkesh, Katharina Tkotz and Lion Muecke
+
+Fat-water separation post-processing
+    git: https://gitlab.rrze.fau.de/be17lika/stelter_3d_fw_separation
+    branch: restructuring
+
+    -> Accesses:
+	git: https://gitlab.rrze.fau.de/be17lika/fieldmapping-hmrGC
+	branch: memoryIssues
+
+
+
+Cite:
+...no abstracts or publications yet
+
+
+
+References:
+- 3D Graphcut fat-water separation (Stelter et al., 2022, https://www.ncbi.nlm.nih.gov/pubmed/35657831)

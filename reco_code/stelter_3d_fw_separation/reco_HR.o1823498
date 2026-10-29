@@ -1,0 +1,50 @@
+### Starting TaskPrologue of job 1823498 on tg093 at Sun Sep 27 09:51:28 AM CEST 2026
+Running on cores 32-63 with governor ondemand
+Sun Sep 27 09:51:29 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 615.71.09              KMD Version: 615.71.09     CUDA UMD Version: 13.4     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:C1:00.0 Off |                    0 |
+| N/A   32C    P0             51W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+Traceback (most recent call last):
+  File "/home/hpc/mfqb/mfqb102h/stelter_3d_fw_separation/fat_water.py", line 14, in <module>
+    import pydicom
+ModuleNotFoundError: No module named 'pydicom'
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 09:51:35 AM CEST 2026
+= Job-ID             : 1823498 on tinygpu
+= Job-Name           : reco_HR
+= Job-Command        : /home/hpc/mfqb/mfqb102h/stelter_3d_fw_separation/gpu_batch_job_HR.sh
+= Initial workdir    : /home/hpc/mfqb/mfqb102h/stelter_3d_fw_separation
+= Queue/Partition    : a100
+= Slurm account      : mfqb with QOS=normal
+= Requested resources:  for 12:00:00
+= Elapsed runtime    : 00:00:15
+= Total RAM usage    : 0.1 GiB of requested  GiB (%)   
+= Node list          : tg093
+= Subm/Elig/Start/End: 2026-09-27T09:51:20 / 2026-09-27T09:51:20 / 2026-09-27T09:51:20 / 2026-09-27T09:51:35
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/hpc             104.3G   104.9G   209.7G        N/A     129K     500K   1,000K        N/A    
+    /home/woody           972.1G  1000.0G  1500.0G        N/A     654K   5,000K   7,500K        N/A    
+!!! /home/vault          1271.5G  1048.6G  2097.2G  -28982days     490      200K     400K        N/A !!!
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
