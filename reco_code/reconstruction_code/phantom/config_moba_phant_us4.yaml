@@ -1,0 +1,100 @@
+# general parameters
+
+
+path: /path/to/data
+file: meas_MID00101_FID01005_MR_DA_3D_RAD_20k_1000mum.dat
+
+
+save_h5: True
+save_mat: False
+save_nii: False
+
+slidingwindowpros: 10000
+slidingwindowstep: 10000
+shift: [0] # [ppm]                    
+grad_delay: 0 # [µs]
+steps: 0      # number of TEs to reconstruct, if 0, it will reconstruct all
+
+coil_estimation_3d: True
+coil_compression: True
+N_virtual_coils: 17
+calc_equi_TE_windows: False
+
+undersampling_factor: 4
+TE_us: False
+
+save_all_slices: False
+slices_around_center_to_save: 20
+Fixed_output_slice: 80  # -1= None
+
+iterativeReco: False
+recon_type: model_based #basic, model_based, k_s_sepa
+custom_out_name: phantom_20k_spokes_ini_3x2x10_us4_alph_1_redu_15_TVw_1_TVf_1
+save_complete: True
+
+recon_parameter:
+  multichannel_combination: 4   # 1 = ADC, 2 = RSS, 3 = adaptive coil combine Walsh, 4 = use sensitivity maps ESPIRIT 
+  filter_type: 1                # 0 = no filter, 1 = Hamming, 2 = Hanning, 3 = Gaussian
+  filter_sigma: 6e-3
+
+  translation_adjustment_vol: false
+  # translation_cor: 3
+  # translation_sag: 0
+  translation_cor: 0
+  translation_sag: 3
+  translation_tra: 0
+  
+  FOV: 200
+  kvecMethod: 2           # 1= theoretical, 2 = measured
+  #if kvecMethod == 2, specify where the file is
+  kvecFile: GTT_1000mum.mat
+
+  gridOS: 2
+  kbWidth: 4
+  b0correction: 2
+
+iter_reco_parameter:
+  
+
+  gpu_exclusive_reco: False
+  initial_sol_filt: False
+  initial_sol_iterative: False
+  slices_around_center: 100    #only relevant for LLR
+  iters_to_save_step: 3
+  
+
+  reg: TIK
+  solver: ADMM
+  lambda: 1
+  rho: 0.01
+  max_iter_ADMM: 10
+  max_iter_CG: 60
+  blk_size: [1,6,6]            #only relevant for LLR
+  blk_stride: [1,2,2]           #only relevant for LLR
+  randshift: True
+  use_con_mask: False
+  con_step: 0         #only relevant for contrast constrained reconstruction
+  con_stride: 6          #only relevant for contrast constrained reconstruction
+
+moba_parameter:
+
+  init_file_path: /path/to/data/Phantom_20k_30_win_us4_3Dgc_multi_res/moba_ini.h5
+  dcf_path: /path/to/data/densityCompensation_projections_117_N_windows_1019.h5
+  mps_name: mps_virtual_17_projections_20000_usfactor_4_FOV_200_3d.h5
+  fat_model: phantom
+  fix_fieldmap: False
+  init_fat_water: False
+  init_fieldmap: True
+  smooth_fieldmap: False
+  fm_normalization: None
+  trafo_MGRE: identity
+  scaling: 1
+  alpha: 1
+  redu: 1.5
+  inner_tol: 0
+  TV_weight_water: 1
+  TV_weight_fat: 1
+  max_iter_IRGNM: 3
+  max_iter_inner: 2
+  max_iter_CG: 10
+

@@ -1,0 +1,93 @@
+# general parameters
+
+path: /path/to/data
+file: meas_MID00101_FID01005_MR_DA_3D_RAD_20k_1000mum.dat
+
+
+save_h5: True
+save_mat: False
+save_nii: True
+
+slidingwindowpros: 4000
+slidingwindowstep: 4000
+shift: [0] # [ppm]                    
+grad_delay: 0 # [µs]
+steps: 0      # number of TEs to reconstruct, if 0, it will reconstruct all
+calc_equi_TE_windows: False
+combine_windows: 169
+
+coil_estimation_3d: True
+coil_compression: True
+N_virtual_coils: 17
+
+undersampling_factor: 4
+
+save_all_slices: False
+slices_around_center_to_save: 100
+Fixed_output_slice: -1  # -1= None
+
+iterativeReco: False
+recon_type: basic #basic, model_based, k_s_sepa
+custom_out_name: reco_TV_all_us_4_80k_data
+save_complete: True
+
+recon_parameter:
+  multichannel_combination: 4   # 1 = ADC, 2 = RSS, 3 = adaptive coil combine Walsh, 4 = use sensitivity maps ESPIRIT 
+  filter_type: 1                # 0 = no filter, 1 = Hamming, 2 = Hanning, 3 = Gaussian
+  filter_sigma: 6e-3
+
+  translation_adjustment_vol: false
+  # translation_cor: 3
+  # translation_sag: 0
+  translation_cor: 3
+  translation_sag: -0
+  translation_tra: 0
+  
+  FOV: 200
+  kvecMethod: 2           # 1= theoretical, 2 = measured
+  #if kvecMethod == 2, specify where the file is
+  kvecFile: GTT_1000mum.mat
+
+  gridOS: 2
+  kbWidth: 4
+  b0correction: 2
+
+iter_reco_parameter:
+  
+
+  gpu_exclusive_reco: True
+  initial_sol_filt: False
+  initial_sol_iterative: False
+  slices_around_center: 100    #only relevant for LLR
+  iters_to_save_step: 2
+  
+
+  reg: TV
+  solver: ADMM
+  lambda: 0.005
+  rho: 0.01
+  max_iter_ADMM: 10
+  max_iter_CG: 20
+  blk_size: [1,4,4]            #only relevant for LLR
+  blk_stride: [1,1,1]           #only relevant for LLR
+  randshift: True
+  use_con_mask: False
+  con_step: 0         #only relevant for contrast constrained reconstruction
+  con_stride: 6          #only relevant for contrast constrained reconstruction
+
+moba_parameter:
+
+  init_file_path: /path/to/data/initially_reconstructed_meas_MID00029_FID01301_MR_DA_3D_RAD_20k_1000mum.dat_win_10000_steps_12_us_1_C_16_FOV_200_ppm_0_initial_sol.h5
+  fix_fieldmap: True
+  init_fat_water: false
+  init_fieldmap: True
+  smooth_fieldmap: True
+  fm_normalization: max
+  trafo_MGRE: identity
+  scaling: 1
+  alpha: 1.0
+  redu: 1.5
+  inner_tol: 0.01
+  max_iter_IRGNM: 10
+  max_iter_CG: 60
+

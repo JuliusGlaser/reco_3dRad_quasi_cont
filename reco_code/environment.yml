@@ -3,9 +3,9 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
-  - numpy
+  - numpy<2
+  - scipy<1.14
   - pyyaml
-  - scipy
   - h5py
   - packaging
   - tqdm
@@ -14,5 +14,11 @@ dependencies:
   - ipykernel
   - matplotlib
   - ipywidgets
-  - pip
   - pydicom
+  - nibabel
+  - pip
+  - pip:
+      - PyMaxflow
+      - opencv-python
+      - cupy-cuda12x
+      - SimpleITK==2.5.5
